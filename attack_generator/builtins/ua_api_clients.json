@@ -1,0 +1,6 @@
+[
+  "curl/8.1.2",
+  "python-requests/2.31.0",
+  "Go-http-client/2.0",
+  "okhttp/4.11.0"
+]

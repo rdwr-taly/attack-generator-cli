@@ -1,0 +1,119 @@
+# Python bytecode / cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.build/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+.pytest_cache/
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+pytestdebug.log
+.prof/
+
+# Type checkers
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+
+# Lint / formatting
+ruff_cache/
+
+# Logs
+logs/
+*.log
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*~
+.project
+.pydevproject
+
+# OS / Misc
+.DS_Store
+Thumbs.db
+
+# Containers / build artifacts
+*.bak
+*.tmp
+
+# Dependency managers
+poetry.lock
+Pipfile.lock
+
+# Local overrides
+docker-compose.override.yml
+
+# Coverage artifacts
+coverage-report/
+
+# Security scan caches
+bandit.json
+
+# Archive outputs
+*.tar
+*.tar.gz
+*.zip
+
+# Generated docs
+site/
+_docs_build/
+
+# Temporary experiment dirs
+scratch/

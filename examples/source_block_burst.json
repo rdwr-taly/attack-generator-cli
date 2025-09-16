@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "name": "Source Block Burst",
+  "description": "Single IP hammering vulnerable API endpoints",
+  "target": { "base_url": "https://cwafdemo.radware.net", "xff_header": "client-ip" },
+  "safety": {
+    "allowlist": ["*.radware.net"],
+    "global_rps_cap": 50,
+    "stop_on_target_mismatch": true,
+    "banner": "Authorized Radware demo targets only."
+  },
+  "presets": { "ua_group": "api_clients", "headers": "builtin.headers.api_json_v1" },
+  "variables": {
+    "customer_id": { "type": "int", "min": 1000, "max": 9999 }
+  },
+  "attacks": [
+    {
+      "id": "A_API_SQLI",
+      "name": "Inventory SQL injection",
+      "traffic_type": "api",
+      "category": "sqli",
+      "method": "POST",
+      "path": "/api/inventory",
+      "headers": "builtin.headers.api_json_v1",
+      "body_type": "json",
+      "body": { "id": "' OR 1=1 --", "customer": "{{ int(1,10) }}" }
+    },
+    {
+      "id": "A_DIR_TRAVERSAL",
+      "name": "Directory traversal",
+      "traffic_type": "api",
+      "category": "lfi",
+      "method": "GET",
+      "path": "/api/download?path=../../etc/passwd"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "S_BURST",
+      "name": "Global source blocking burst",
+      "select": { "by_ids": ["A_API_SQLI", "A_DIR_TRAVERSAL"] },
+      "ip_pool": "single_static",
+      "ua_group": "api_clients",
+      "rate": { "qps": 40, "duration_sec": 30 },
+      "jitter_ms": [25, 125]
+    }
+  ],
+  "runtime": { "think_time_ms": [50, 500], "concurrency": 10 }
+}

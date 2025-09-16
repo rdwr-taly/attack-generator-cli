@@ -1,0 +1,34 @@
+[project]
+name = "attack-generator"
+version = "0.1.0"
+description = "Radware attack generator CLI"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+  { name = "Radware Demo Team" }
+]
+dependencies = [
+  "anyio>=4.0",
+  "httpx>=0.26",
+  "jinja2>=3.1",
+  "jsonschema>=4.21",
+  "prometheus-client>=0.19",
+  "pydantic>=2.5",
+  "typer>=0.9",
+  "container-control>=1.1",
+  "trio>=0.22",
+]
+
+[project.scripts]
+attack-generator = "attack_generator.cli:app"
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+
+[build-system]
+requires = ["setuptools>=67", "wheel"]
+build-backend = "setuptools.build_meta"

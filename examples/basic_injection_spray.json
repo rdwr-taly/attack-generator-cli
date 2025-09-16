@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "name": "Basic Injection Spray",
+  "target": { "base_url": "https://cwafdemo.radware.net", "xff_header": "client-ip" },
+  "safety": { "allowlist": ["*.radware.net"], "global_rps_cap": 20, "stop_on_target_mismatch": true },
+  "presets": { "ua_group": "web_desktop", "headers": "auto" },
+  "variables": {
+    "usernames": { "type": "list", "values": ["admin", "demo", "test"] },
+    "passwords": { "type": "list", "values": ["123456", "Password!", "Summer2024!"] }
+  },
+  "attacks": [
+    {
+      "id": "A_LOGIN_SQLI",
+      "name": "Login SQL injection",
+      "traffic_type": "web",
+      "category": "sqli",
+      "method": "POST",
+      "path": "/user/login",
+      "headers": "builtin.headers.web_html_v1",
+      "body_type": "form",
+      "body": { "username": "{{ pick('usernames') }}", "password": "{{ pick('passwords') }}" }
+    },
+    {
+      "id": "A_SEARCH_XSS",
+      "name": "Search parameter XSS",
+      "traffic_type": "web",
+      "category": "xss",
+      "method": "GET",
+      "path": "/search?searchString={{ urlencode('<script>alert(1)</script>') }}"
+    }
+  ],
+  "runtime": { "think_time_ms": [100, 1500], "concurrency": 5 }
+}
