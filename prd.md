@@ -1,8 +1,10 @@
-# Attack Generator CLI — Product Requirements Document (CLI‑only, v1)
+# Attack Generator CLI — Product Requirements Document (CLI-only, v1)
 
-> **Scope:** This PRD defines the standalone **attack-generator-cli** tool only. ShowRunner UI/API additions will be covered in a separate PRD.
-> **Audience:** Radware demo engineers, SEs, and maintainers.
-> **Purpose:** Continuously seed **authorized Radware demo apps** with realistic web/API attacks so WAAP dashboards always show meaningful, fresh security events during demos.
+**Scope:** Defines the standalone `attack-generator-cli` tool only. ShowRunner UI/API additions will be covered separately.
+
+**Audience:** Radware demo engineers, SEs, and maintainers.
+
+**Purpose:** Continuously seed authorized Radware demo apps with realistic web/API attacks so WAAP dashboards always show meaningful, fresh security events during demos.
 
 ---
 
@@ -14,35 +16,28 @@ Demo targets often look quiet between sessions. Spinning up meaningful events (S
 
 ### 1.2 Goals
 
-* **G1 — Consistent UX:** Mirrors `traffic-generator-cli` startup model: one **resource file** selected at run time (single **AttackMap**), continuous run by default.
-* **G2 — Declarative resource:** A simple but extensible **AttackMap** describing target, variables, built‑in presets, attacks, and (optionally) scenarios.
-* **G3 — Realistic diversity:** Large **built‑in catalogs** for **web** vs **api** User‑Agents and Header presets with automatic randomization.
-* **G4 — Safety first:** Domain allowlist, capped RPS, dry‑run, emergency stop, audit banner. Tool refuses to run off‑allowlist.
-* **G5 — Observability:** JSON logs + Prometheus metrics: per‑category counters, RPS, error rates; reproducible runs via seeds.
-* **G6 — Extensibility:** Templating, variable substitution, auth flows; simple to add new attacks without code changes.
-
-### 1.3 Success Metrics
-
-* **M1:** < 60s to first WAAP event after `run` with a valid AttackMap.
-* **M2:** Zero off‑allowlist requests across official demos.
-* **M3:** New attack added via resource only (no code) in < 10 minutes.
-* **M4:** Mean p95 CPU < 40% and memory < 250MB at 50 RPS in lab.
+- **G1 — Consistent UX:** Mirrors `traffic-generator-cli` startup model: one resource file selected at run time (single AttackMap), continuous run by default.
+- **G2 — Declarative resource:** A simple but extensible AttackMap describing target, variables, built-in presets, attacks, and (optionally) scenarios.
+- **G3 — Realistic diversity:** Large built-in catalogs for web vs api User-Agents and Header presets with automatic randomization.
+- **G4 — Safety first:** Domain allowlist, capped RPS, dry-run, emergency stop, audit banner. Tool refuses to run off-allowlist.
+- **G5 — Observability:** JSON logs + Prometheus metrics: per-category counters, RPS, error rates; reproducible runs via seeds.
+- **G6 — Extensibility:** Templating, variable substitution, auth flows; simple to add new attacks without code changes.
 
 ---
 
-## 2. Out of Scope (for this PRD)
+## 2. Out of Scope (v1)
 
-* ShowRunner UI/API resource pages, selectors, and task wiring.
-* Multi‑map selection or orchestration (v1 is **single AttackMap**, just like Sitemap).
-* Fuzzing frameworks, exploitation tooling, or unauthorized testing.
+- ShowRunner UI/API resource pages, selectors, and task wiring.
+- Multi-map selection or orchestration (v1 = single AttackMap, like Sitemap).
+- Fuzzing frameworks, exploitation tooling, or unauthorized testing.
 
 ---
 
 ## 3. Users & Top Scenarios
 
-* **Demo Engineer / SE:** Seed Global Source Blocking by hammering from a single IP; run ATO brute force against login; spray injections and directory probes for dashboards.
-* **POC Lead:** Reproduce a curated “attack pack” with controlled rates during a workshop.
-* **Maintainer:** Validate new WAAP policy rules with scripted hostile inputs.
+- **Demo Engineer / SE:** Seed Global Source Blocking by hammering from a single IP; run ATO brute force; spray injections & directory probes.
+- **POC Lead:** Reproduce curated “attack pack” with controlled rates during a workshop.
+- **Maintainer:** Validate new WAAP policy rules with scripted hostile inputs.
 
 ---
 
@@ -50,18 +45,18 @@ Demo targets often look quiet between sessions. Spinning up meaningful events (S
 
 ### 4.1 Run Model
 
-* **Single resource input:** `--attackmap <path-or-url>` (JSON only).
-* **Continuous run:** default behavior; loop forever with optional cycle delay.
-* **Dry-run:** resolve and print N example requests without sending.
-* **Deterministic mode:** `--seed` to make sequences reproducible.
+- Single resource input: `--attackmap <path-or-url>` (JSON only)
+- Continuous run: default; loop forever with optional cycle delay
+- Dry-run: resolve & print N example requests without sending
+- Deterministic mode: `--seed` for reproducibility
 
 ### 4.2 CLI Commands
 
 ```
-attack-generator run     # start continuous run with one AttackMap
-attack-generator validate <file>   # schema + semantic validation
-attack-generator dry-run <file>    # resolve N sample requests and print
-attack-generator list-builtins     # show UA/header preset names & sizes
+attack-generator run                 # start continuous run with one AttackMap
+attack-generator validate <file>     # schema + semantic validation
+attack-generator dry-run <file>      # resolve N sample requests and print
+attack-generator list-builtins       # show UA/header preset names & sizes
 attack-generator version
 ```
 
@@ -83,18 +78,20 @@ attack-generator version
 --unsafe-override             (bypass hard caps for lab only; requires --i-know-what-im-doing)
 ```
 
-### 4.4 Defaults (opinionated)
+### 4.4 Defaults
 
-* `qps=5`, `concurrency=20`, `ua-group=web_desktop` for web attacks, `api_clients` for api attacks, `xff=client-ip`.
-* Think time jitter between 100–1500 ms unless overridden by map.
+- `qps=5`, `concurrency=20`
+- `ua-group=web_desktop` for web attacks; `api_clients` for api attacks
+- `xff=client-ip`
+- Think time jitter: 100–1500 ms (unless map override)
 
 ---
 
 ## 5. AttackMap Resource (v1)
 
-> **Design principles:** small for simple demos; powerful via optional fields.
-> **File formats:** JSON only (UTF-8).
-> **Single resource file** at runtime; no multiselect.
+**Principles:** Small for simple demos; powerful via optional fields.
+
+**Format:** JSON (UTF-8). Single file at runtime.
 
 ### 5.1 Top-Level Shape
 
@@ -112,8 +109,8 @@ attack-generator version
   },
   "presets": { "ua_group": "web_desktop", "headers": "auto" },
   "variables": {
-    "usernames": { "type": "list", "values": ["admin","user","test"] },
-    "passwords": { "type": "list", "values": ["123456","password"] },
+    "usernames": { "type": "list", "values": ["admin", "user", "test"] },
+    "passwords": { "type": "list", "values": ["123456", "password"] },
     "product_id": { "type": "int", "min": 1, "max": 100 }
   },
   "auth": {
@@ -148,7 +145,7 @@ attack-generator version
     {
       "id": "S_BURST",
       "name": "Global Source Blocking Burst",
-      "select": { "by_ids": ["A_SQLI_BODY_001","A_XSS_QUERY_01"] },
+      "select": { "by_ids": ["A_SQLI_BODY_001", "A_XSS_QUERY_01"] },
       "ip_pool": "single_static",
       "ua_group": "web_desktop",
       "rate": { "qps": 80, "duration_sec": 20 },
@@ -167,58 +164,58 @@ attack-generator version
 
 ### 5.2 Templates & Helpers
 
-* **Placeholders:** `{{ pick('usernames') }}`, `{{ int(1,100) }}`, `{{ ua('web_desktop') }}`.
-* **Back‑compat:** `@var` replacement supported inside `path` and string bodies.
-* **Transforms:** `{{ base64('text') }}`, `{{ urlencode('a=b') }}`.
+- Placeholders: `{{ pick('usernames') }}`, `{{ int(1,100) }}`, `{{ ua('web_desktop') }}`
+- Back-compat: `@var` replacement supported inside path and string bodies
+- Transforms: `{{ base64('text') }}`, `{{ urlencode('a=b') }}`
 
 ### 5.3 Identity & Pools
 
-* **IP pools:** `single_static`, `random:N`, `cidr:X/Y`, `list:[...]` (file-based allowed).
-* **UA groups:** `web_desktop`, `web_mobile`, `api_clients` (built‑ins) with appending custom lists.
+- IP pools: `single_static`, `random:N`, `cidr:X/Y`, `list:[...]` (file-based allowed)
+- UA groups: `web_desktop`, `web_mobile`, `api_clients` (built-ins) plus custom append
 
 ### 5.4 Authentication Behaviors
 
-* **basic** → add Authorization header.
-* **form** → POST to `path` with credentials; store cookies.
-* **bearer** → POST/GET to obtain token at `path`; store token at `json_path` or header key.
-* Retries: none by default; configurable in `runtime.retry`.
+- `basic` → add Authorization header
+- `form` → POST to path with credentials; store cookies
+- `bearer` → POST/GET to obtain token at path; store token at `json_path` or header key
+- Retries: none by default; configurable via `runtime.retry`
 
 ### 5.5 Validation Rules
 
-* Must define `target.base_url` and `safety.allowlist`.
-* `rate.qps` cannot exceed `safety.global_rps_cap` unless `--unsafe-override`.
-* `attacks[*].path` must be absolute or query path; engine will join with `base_url`.
+- Must define `target.base_url` and `safety.allowlist`
+- `rate.qps` cannot exceed `safety.global_rps_cap` unless `--unsafe-override`
+- `attacks[*].path` must be absolute or query path; engine joins with base_url
 
 ---
 
-## 6. Built‑in Catalogs (in binary)
+## 6. Built-in Catalogs (in binary)
 
-### 6.1 User‑Agent Groups
+### 6.1 User-Agent Groups
 
-* **web\_desktop**: 200+ realistic desktop UAs (Chrome/Edge/Firefox versions).
-* **web\_mobile**: 150+ Android/iOS UAs (Chrome Mobile/Safari).
-* **api\_clients**: 100+ clients (python-requests, curl, okhttp, httpclient, axios, jQuery, libcurl, Go http, etc.).
+- `web_desktop`: 200+ realistic desktop UAs (Chrome/Edge/Firefox versions)
+- `web_mobile`: 150+ Android/iOS UAs (Chrome Mobile/Safari)
+- `api_clients`: 100+ clients (`python-requests`, `curl`, `okhttp`, `httpclient`, `axios`, `jQuery`, `libcurl`, `Go http`, etc.)
 
-Selection strategy: weighted random; configurable per scenario or attack. Deterministic with `--seed`.
+Selection: weighted random; deterministic with `--seed`.
 
 ### 6.2 Header Presets
 
-* **builtin.headers.web\_html\_v1** → `Accept: text/html,*/*`, `Accept-Language: en-US,en;q=0.9`, etc.
-* **builtin.headers.api\_json\_v1** → `Accept: application/json`, `Content-Type: application/json`.
-* **builtin.headers.api\_form\_v1** → `Content-Type: application/x-www-form-urlencoded`.
+- `builtin.headers.web_html_v1` → `Accept: text/html,*/*`, `Accept-Language: en-US,en;q=0.9`, etc.
+- `builtin.headers.api_json_v1` → `Accept: application/json`, `Content-Type: application/json`
+- `builtin.headers.api_form_v1` → `Content-Type: application/x-www-form-urlencoded`
 
-Preset merge order: global defaults → scenario preset → attack headers (last wins).
+Merge order: global defaults → scenario preset → attack headers (last wins).
 
 ---
 
 ## 7. Safety & Compliance
 
-* **Allowlist required** (unless lab override). Startup fails if `base_url` not covered by allowlist.
-* **Global RPS hard cap** (50 by default) unless `--unsafe-override`.
-* **Emergency stop:** SIGINT/SIGTERM → graceful halt ≤ 2s.
-* **Dry‑run mode:** never sends traffic; prints resolved requests.
-* **Audit banner** printed on start with hashed AttackMap, allowlist, operator, and timestamp.
-* **Use strictly for authorized Radware demo systems.**
+- Allowlist required (unless lab override). Startup fails if base_url not covered.
+- Global RPS hard cap (50 by default) unless `--unsafe-override`.
+- Emergency stop: SIGINT/SIGTERM → graceful halt ≤ 2s.
+- Dry-run: never sends traffic; prints resolved requests.
+- Audit banner: hashed AttackMap, allowlist, operator, timestamp.
+- Use strictly for authorized Radware demo systems.
 
 ---
 
@@ -226,29 +223,34 @@ Preset merge order: global defaults → scenario preset → attack headers (last
 
 ### 8.1 Logs
 
-* **Format:** JSON (default) or text.
-* **Content:** timestamp, level, attack\_id, scenario\_id (if any), method, url, ip, ua, status\_code, latency\_ms, error (if any).
+- Format: JSON (default) or text
+- Fields: timestamp, level, attack_id, scenario_id, method, url, ip, ua, status_code, latency_ms, error
 
 ### 8.2 Metrics (Prometheus + JSON)
 
-* `attack_rps` (gauge)
-* `attack_sent_total{attack_id,category}` (counter)
-* `http_status_total{code}` (counter)
-* `scenario_sent_total{scenario_id}` (counter)
-* `errors_total{type}` (counter)
-* `system_cpu_percent`, `system_mem_percent` (gauges)
+Counters / Gauges:
 
-`GET /metrics` (Prometheus) and `GET /api/metrics` (JSON snapshot). HTTP control endpoints are optional; CLI runs fine without them.
+- `attack_rps` (gauge)
+- `attack_sent_total{attack_id,category}` (counter)
+- `http_status_total{code}` (counter)
+- `scenario_sent_total{scenario_id}` (counter)
+- `errors_total{type}` (counter)
+- `system_cpu_percent`, `system_mem_percent` (gauges)
+
+Endpoints (when control server enabled via container-control integration):
+
+- `GET /metrics` (Prometheus)
+- `GET /api/metrics` (JSON snapshot)
 
 ---
 
-## 9. Non‑Functional Requirements
+## 9. Non-Functional Requirements
 
-* **Performance:** sustain 50 RPS with p95 latency < 200 ms client‑side on a 1 vCPU/1GB pod against a local echo service.
-* **Reliability:** auto‑backoff on connect errors; jittered retries if `runtime.retry.max_attempts>0`.
-* **Security:** no outbound if allowlist mismatch; HTTPS by default; no credential logs.
-* **Portability:** Linux/amd64 container; Python 3.11; single static binary via PyInstaller optional.
-* **Configurability:** flags, env vars (`AG_*`), and AttackMap fields; precedence: **flag > env > map**.
+- **Performance:** sustain 50 RPS; p95 latency < 200 ms client-side on 1 vCPU / 1GB pod (local echo)
+- **Reliability:** auto-backoff on connect errors; jittered retries if `runtime.retry.max_attempts > 0`
+- **Security:** no outbound if allowlist mismatch; HTTPS default; no credential logs
+- **Portability:** Linux/amd64 container; Python 3.11; optional PyInstaller single binary
+- **Configurability:** flags, env vars (`AG_*`), AttackMap fields (precedence: flag > env > map)
 
 ---
 
@@ -256,7 +258,7 @@ Preset merge order: global defaults → scenario preset → attack headers (last
 
 ### 10.1 CLI Examples
 
-```
+```bash
 attack-generator run --attackmap ./attackmaps/hackazon.json \
   --allowlist "*.radware.net" --qps 8 --concurrency 20 --metrics-port 9102
 
@@ -267,86 +269,59 @@ attack-generator validate ./attackmaps/hackazon.json
 
 ### 10.2 Optional Control (when run with `--server`)
 
-```
-POST /api/start  {"attackmap":{...}, "config":{...}}
-POST /api/stop
-GET  /api/health
-GET  /api/metrics
-```
+Endpoints (provided via container-control package):
+
+- `POST /api/start`  body: `{ "attackmap": { ... }, "config": { ... } }`
+- `POST /api/stop`
+- `GET  /api/health`
+- `GET  /api/metrics`
 
 ---
 
 ## 11. Implementation Notes
 
-* **Language/stack:** Python 3.11, `httpx` (async), `anyio`, `pydantic` (schema), `jinja2` (templating helpers), `prometheus_client`.
-* **Structure:**
+- **Language / Stack:** Python 3.11, `httpx` (async), `anyio`, `pydantic`, `jinja2`, `prometheus_client`.
+- **Control server integration:** When `--server` is enabled, HTTP control + metrics via container-control (no custom server).
 
-  * `cli.py` (Typer/argparse)
-  * `models.py` (AttackMap v1, Config)
-  * `engine/` (resolver, ip\_pool, ua\_pool, rate\_limit, scheduler, transport)
-  * `metrics.py` (Prometheus + JSON snapshot)
-  * `server.py` (optional FastAPI)
-  * `builtins/` (ua & header catalogs, versioned)
-* **Determinism:** pass `seed` to RNGs used by pools, selection, jitter.
-* **Legacy migration:** provide `tools/convert_v0.py` to transform the old JSON you shared into AttackMap v1.
+**Structure:**
+
+```
+cli.py              (Typer/argparse)
+models.py           (AttackMap v1, Config)
+engine/             (resolver, ip_pool, ua_pool, rate_limit, scheduler, transport)
+metrics.py          (Prometheus + JSON snapshot)
+server.py           (optional; container-control integration)
+builtins/           (ua & header catalogs, versioned)
+```
+
+- Determinism: pass seed to RNGs (pools, selection, jitter).
+- Legacy migration: `tools/convert_v0.py` to transform old JSON into AttackMap v1.
 
 ---
 
 ## 12. Validation & Test Plan
 
-* **Schema validation:** `attack-generator validate` with clear messages (line/field).
-* **Unit:** variable resolver, UA/header merge, IP pool generation, rate limiter.
-* **Integration:** dry‑run and live run against a stub server; metrics assertions.
-* **Safety tests:** allowlist enforcement, cap enforcement, emergency stop.
-* **Performance tests:** sustained 50 RPS with defined CPU/RAM budgets.
-* **Regression:** replay with fixed `--seed` to confirm deterministic sequences.
+- **Schema validation:** `attack-generator validate` with clear messages (line/field)
+- **Unit:** variable resolver, UA/header merge, IP pool generation, rate limiter
+- **Integration:** dry-run & live run vs stub server; metrics assertions
+- **Safety tests:** allowlist enforcement, cap enforcement, emergency stop
+- **Performance tests:** sustained 50 RPS within CPU/RAM budgets
+- **Regression:** replay with fixed `--seed` for deterministic sequences
 
 ---
 
 ## 13. Deliverables & Milestones
 
-* **D1:** AttackMap schema + validator + `dry-run` (Week 1)
-* **D2:** Async engine (HTTP, rate limit, UA/IP pools) + metrics (Week 2)
-* **D3:** Auth flows + scenarios + safety gates (Week 3)
-* **D4:** Built-in catalogs v1 (web/api) + conversion tool (Week 4)
-* **D5:** Docs (README + examples) + container image (Week 4)
+- **D1:** AttackMap schema + validator + dry-run (Week 1)
+- **D2:** Async engine (HTTP, rate limit, UA/IP pools) + metrics (Week 2)
+- **D3:** Auth flows + scenarios + safety gates (Week 3)
+- **D4:** Built-in catalogs v1 (web/api) + conversion tool (Week 4)
+- **D5:** Docs (README + examples) + container image (Week 4)
 
 ---
 
 ## 14. Appendix — Minimal AttackMap (JSON)
 
-````json
-{
-  "version": 1,
-  "name": "Basic Injection Spray",
-  "target": { "base_url": "https://cwafdemo.radware.net", "xff_header": "client-ip" },
-  "safety": { "allowlist": ["*.radware.net"], "global_rps_cap": 20, "stop_on_target_mismatch": true },
-  "presets": { "ua_group": "web_desktop", "headers": "auto" },
-  "variables": { "usernames": { "type": "list", "values": ["admin","user","test"] } },
-  "attacks": [
-    {
-      "id": "A_LOGIN_Sqli",
-      "name": "Login SQLi",
-      "traffic_type": "web",
-      "category": "sqli",
-      "method": "POST",
-      "path": "/user/login",
-      "headers": "builtin.headers.web_html_v1",
-      "body_type": "form",
-      "body": { "username": "' or 1=1 --", "password": "abc" }
-    },
-    {
-      "id": "A_XSS_Search",
-      "name": "XSS search param",
-      "traffic_type": "web",
-      "category": "xss",
-      "method": "GET",
-      "path": "/search?searchString=<script>alert(1)</script>"
-    }
-  ],
-  "runtime": { "think_time_ms": [100, 1500], "concurrency": 10 }
-}
-```yaml
 ```json
 {
   "version": 1,
@@ -378,4 +353,4 @@ GET  /api/metrics
   ],
   "runtime": { "think_time_ms": [100, 1500], "concurrency": 10 }
 }
-
+```
