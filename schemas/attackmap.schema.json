@@ -87,7 +87,7 @@
           "enum": ["basic", "form", "bearer"]
         },
         "path": { "type": "string" },
-        "method": { "type": "string" },
+        "method": { "type": "string", "enum": ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] },
         "credentials": {
           "type": "object",
           "required": ["username", "password"],
@@ -120,7 +120,7 @@
           "name": { "type": "string" },
           "traffic_type": { "type": "string", "enum": ["web", "api"] },
           "category": { "type": "string" },
-          "method": { "type": "string" },
+          "method": { "type": "string", "enum": ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] },
           "path": { "type": "string" },
           "headers": {
             "oneOf": [
@@ -202,7 +202,10 @@
           "maxItems": 2
         },
         "concurrency": { "type": "integer", "minimum": 1 },
-        "cookie_jar": { "type": "string" },
+        "cookie_jar": {
+          "type": "string",
+          "enum": ["per_ip", "per_scenario", "shared"]
+        },
         "session_reuse": { "type": "boolean" },
         "retry": {
           "type": "object",

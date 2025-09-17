@@ -9,7 +9,8 @@ import time
 from dataclasses import dataclass
 from itertools import cycle
 from pathlib import Path
-from typing import Dict, Iterable, Iterator, List, Optional, Tuple, Union
+from datetime import datetime, timezone
+from typing import Callable, Dict, Iterable, Iterator, List, Optional, Tuple, Union
 
 import anyio
 import httpx
@@ -50,7 +51,7 @@ class AttackRunner:
         *,
         metrics: Metrics,
         base_path: Optional[Path] = None,
-        client=None,
+        client_factory: Optional[Callable[[], httpx.AsyncClient]] = None,
     ) -> None:
         self._attack_map = attack_map
         self._config = config
@@ -66,12 +67,30 @@ class AttackRunner:
         self._ip_pools: Dict[Optional[str], IPPool] = {}
         self._resolver_factory = ResolverFactory(attack_map, self._ua_pool)
         base_url = config.base_url_override or str(attack_map.target.base_url)
-        self._transport = AttackTransport(attack_map, base_url=base_url, client=client)
+        self._transport = AttackTransport(attack_map, base_url=base_url, client_factory=client_factory)
         self._rate_limiter = AsyncRateLimiter(config.qps)
+        self._scenario_limiters: Dict[str, AsyncRateLimiter] = {}
+        for scenario in self._attack_map.scenarios:
+            if scenario.rate:
+                self._scenario_limiters[scenario.id] = AsyncRateLimiter(scenario.rate.qps)
         think_time = attack_map.runtime.think_time_ms or (100, 1500)
         self._think_time = think_time
         self._stop_event = anyio.Event()
         self._running = False
+
+    def _ua_group_for_entry(self, entry: ExecutionEntry) -> str:
+        if entry.ua_group:
+            return entry.ua_group
+        if self._config.ua_group_override:
+            return self._config.ua_group_override
+        if self._config.map_ua_group:
+            return self._config.map_ua_group
+        return "api_clients" if entry.attack.traffic_type == "api" else "web_desktop"
+
+    async def _system_stats_task(self) -> None:
+        while not self._stop_event.is_set():
+            self._metrics.sample_system()
+            await anyio.sleep(5.0)
 
     def _build_plan(self) -> List[ExecutionEntry]:
         entries: List[ExecutionEntry] = []
@@ -167,6 +186,7 @@ class AttackRunner:
         merge(attack_headers)
         headers.setdefault("User-Agent", ua)
         headers[self._config.xff] = ip
+        headers.pop("Host", None)
         return headers
 
     def _resolve_request(
@@ -178,7 +198,8 @@ class AttackRunner:
         ua: str,
     ) -> ResolvedRequest:
         state: Dict[str, str] = {}
-        extra = {"ua_group": entry.ua_group or self._config.ua_group, "ip": ip, "ua": ua}
+        effective_group = self._ua_group_for_entry(entry)
+        extra = {"ua_group": effective_group, "ip": ip, "ua": ua}
         path = resolver.resolve(entry.attack.path, state=state, extra=extra)
         url = self._transport.absolute_url(path)
         headers = self._resolve_headers(
@@ -224,7 +245,7 @@ class AttackRunner:
         for _ in range(count):
             entry = next(plan_cycle)
             ip = ip_pool.pick()
-            ua = self._ua_pool.pick(entry.ua_group or self._config.ua_group)
+            ua = self._ua_pool.pick(self._ua_group_for_entry(entry))
             request = self._resolve_request(entry, resolver, ip=ip, ua=ua)
             results.append(
                 {
@@ -239,9 +260,11 @@ class AttackRunner:
         await self._transport.startup()
         audit = self._build_audit_banner()
         LOGGER.info("audit", extra=audit)
+        self._metrics.sample_system()
         self._running = True
         try:
             async with anyio.create_task_group() as tg:
+                tg.start_soon(self._system_stats_task)
                 for worker_id in range(self._config.concurrency):
                     seed = (self._config.seed or 0) + worker_id
                     tg.start_soon(self._worker, worker_id, seed)
@@ -256,8 +279,10 @@ class AttackRunner:
             entry = next(plan_iter)
             ip_pool = self._get_ip_pool(entry.ip_pool_spec)
             ip = ip_pool.pick()
-            ua = self._ua_pool.pick(entry.ua_group or self._config.ua_group)
+            ua = self._ua_pool.pick(self._ua_group_for_entry(entry))
             try:
+                if entry.scenario and entry.scenario.id in self._scenario_limiters:
+                    await self._scenario_limiters[entry.scenario.id].acquire()
                 await self._rate_limiter.acquire()
                 request = self._resolve_request(entry, resolver, ip=ip, ua=ua)
                 start = time.monotonic()
@@ -301,11 +326,15 @@ class AttackRunner:
     def _build_audit_banner(self) -> Dict[str, str]:
         serialized = json.dumps(self._attack_map.describe(), sort_keys=True).encode()
         digest = hashlib.sha256(serialized).hexdigest()
-        return {
+        audit: Dict[str, str] = {
             "banner": self._attack_map.safety.banner or "Authorized Radware demo targets only.",
             "attackmap_hash": digest,
             "allowlist": ",".join(self._config.allowlist),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
+        if self._config.operator:
+            audit["operator"] = self._config.operator
+        return audit
 
     async def stop(self) -> None:
         self._stop_event.set()

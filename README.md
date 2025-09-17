@@ -4,64 +4,92 @@
 > environments that appear on the configured allowlist. Misuse can violate internal
 > policy and local law.
 
-`attack-generator` continuously replays curated web and API attacks to keep Radware
-WAAP demos lively. Operators provide a single JSON AttackMap resource at runtime,
-optionally tweak runtime controls via flags or environment variables, and the engine
+`attack-generator` continuously replays curated web/API attacks to keep WAAP demos
+lively. Operators provide a single JSON AttackMap resource at runtime, optionally
+override runtime settings via flags or `AG_*` environment variables, and the engine
 handles templating, identity pools, rate limiting, and observability.
 
 ## Quickstart
 
-1. Install dependencies and the package:
+```bash
+# 1. Install in editable mode
+pip install -e .
 
-   ```bash
-   pip install .
-   ```
+# 2. Inspect built-ins
+attack-generator list-builtins
 
-2. Validate an AttackMap:
+# 3. Validate and dry-run an AttackMap (JSON only)
+attack-generator validate examples/basic_injection_spray.json
+attack-generator dry-run examples/basic_injection_spray.json --dry-run 5 --seed 42
 
-   ```bash
-   attack-generator validate examples/basic_injection_spray.json
-   ```
+# 4. Launch the generator
+attack-generator run   --attackmap examples/basic_injection_spray.json   --allowlist "*.radware.net"   --qps 3 --metrics-port 9102
+```
 
-3. Preview requests without sending traffic:
+All resources **must** be UTF-8 JSON. Use `tools/convert_v0.py` to bootstrap from
+legacy v0 payloads; the output is schema-valid AttackMap v1.
 
-   ```bash
-   attack-generator dry-run examples/basic_injection_spray.json --dry-run 5 --seed 42
-   ```
+## Configuration Precedence
 
-4. Launch the generator:
+Runtime settings follow **flag > environment (`AG_*`) > AttackMap** precedence.
+Common overrides include:
 
-   ```bash
-   attack-generator run \
-     --attackmap examples/basic_injection_spray.json \
-     --allowlist "*.radware.net" \
-     --qps 3 --metrics-port 9102
-   ```
+- `--allowlist` / `AG_ALLOWLIST`
+- `--qps` / `AG_QPS`
+- `--concurrency` / `AG_CONCURRENCY`
+- `--xff` / `AG_XFF`
+- `--ip-pool` / `AG_IP_POOL`
+- `--ua-group` / `AG_UA_GROUP`
+- `--metrics-port` / `AG_METRICS_PORT`
+- `--log-format` / `AG_LOG_FORMAT`
 
-## Configuration
+Defaults align with the PRD: global QPS 5 (capped by `safety.global_rps_cap`),
+concurrency 20, XFF header `client-ip`, think-time jitter `[100, 1500]` ms, and
+per-traffic-type UA pools (web → `web_desktop`, api → `api_clients`).
 
-- Flags take precedence over environment variables (`AG_*`) which override values
-  defined in the AttackMap file.
-- Common flags: `--allowlist`, `--qps`, `--concurrency`, `--xff`, `--ip-pool`,
-  `--ua-group`, `--metrics-port`, `--log-format`, `--seed`, `--unsafe-override`.
-- Structured JSON logging is the default; switch to text with `--log-format text`.
+## CLI Commands
 
-## Metrics
+- `attack-generator run [...]` – Continuous run. Pass `--server` to enable the
+  container-control HTTP surface. `--attackmap` is optional in server mode; the
+  `/api/start` endpoint can provide one dynamically.
+- `attack-generator dry-run <map> --dry-run N` – Resolve and print N requests without
+  sending traffic.
+- `attack-generator validate <map>` – Schema + semantic validation with friendly
+  JSON Pointer errors on failure.
+- `attack-generator list-builtins` – Show builtin UA groups and header presets with
+  entry counts.
+- `attack-generator version` – Display the installed package version.
 
-Prometheus metrics expose counters and gauges for attack delivery, status codes,
-errors, and system utilisation. By default the CLI listens on port `9102`; pass
-`--metrics-port 0` to disable. The same registry powers the optional control
-server exposed through container-control.
+Makefile helpers mirror these flows (`make test`, `make dryrun`, `make validate`).
 
-## Container-Control Integration
+## Metrics & Logging
 
-Run with `--server` to expose `/api/start`, `/api/stop`, `/api/health`, and
-`/api/metrics` endpoints via the container-control FastAPI surface. The CLI checks
-for the `container-control` package at startup; if it is missing a clear message is
-printed and the command exits non-zero while the standard CLI continues to work.
+Prometheus metrics and JSON logs are emitted by default:
+
+- Counters: `attack_sent_total`, `http_status_total`, `scenario_sent_total`,
+  `errors_total`
+- Gauges: `attack_rps`, `system_cpu_percent`, `system_mem_percent`
+
+Metrics listen on `--metrics-port` (default `9102`); pass `0` to disable. Logs are
+JSON by default – switch to text with `--log-format text`.
+
+## Server Mode & container-control
+
+`attack-generator run --server` mounts container-control routes:
+
+- `POST /api/start` – Provide `{ "attackmap": {...}, "config": {...} }` to start or
+  restart the engine.
+- `POST /api/stop` – Gracefully stop within two seconds.
+- `GET /api/health` – Returns `running` or `stopped`.
+- `GET /api/metrics` – JSON snapshot from the same Prometheus registry.
+
+If the `container-control` dependency is missing the CLI prints a clear message and
+exits non-zero; the regular CLI still works without the server.
 
 ## Resources
 
-- AttackMap specification: `prd.md`
-- Built-in identity/header pools: `attack_generator/builtins/`
-- Example resources: `examples/`
+- Product Requirements Document: [`prd.md`](prd.md)
+- Schema: [`schemas/attackmap.schema.json`](schemas/attackmap.schema.json)
+- Built-ins: [`attack_generator/builtins/`](attack_generator/builtins/)
+- Examples: [`examples/`](examples/)
+- Legacy converter: [`tools/convert_v0.py`](tools/convert_v0.py)

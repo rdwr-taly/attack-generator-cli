@@ -3,28 +3,26 @@ from __future__ import annotations
 import json
 import logging
 import os
+import signal
 import sys
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from functools import lru_cache
 from importlib import metadata
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional
 from urllib.parse import urlparse
 
 import anyio
+import anyio.abc
 import httpx
 import typer
 from jsonschema import Draft7Validator
+from pydantic import ValidationError
 
 from .integrations import container_control_adapter
 from .metrics import Metrics, start_metrics_server
-from .models import (
-    AttackMap,
-    ConfigError,
-    LogFormat,
-    RuntimeConfig,
-    resolve_runtime_config,
-)
+from .models import AttackMap, ConfigError, LogFormat, RuntimeConfig, resolve_runtime_config
 from .pools import BUILTIN_HEADER_FILES, BUILTIN_UA_FILES, UAPool
 from .runner import AttackRunner, ensure_allowlist
 from .server import ControlServer
@@ -61,7 +59,7 @@ class JsonFormatter(logging.Formatter):
 
 @dataclass
 class RunOptions:
-    attackmap: str
+    attackmap: Optional[str]
     allowlist: Optional[List[str]]
     base_url: Optional[str]
     qps: Optional[int]
@@ -70,13 +68,100 @@ class RunOptions:
     ip_pool: Optional[str]
     ua_group: Optional[str]
     metrics_port: Optional[int]
-    log_format: str
+    log_format: Optional[str]
     seed: Optional[int]
     unsafe_override: bool
     acknowledge_override: bool
     server: bool
     operator: Optional[str]
 
+
+class RunnerManager:
+    """Coordinate AttackRunner lifecycle when operating in server mode."""
+
+    def __init__(
+        self,
+        *,
+        metrics: Metrics,
+        base_path: Path,
+        env_values: Dict[str, Any],
+        cli_defaults: Dict[str, Any],
+        task_group: anyio.abc.TaskGroup,
+        client_factory: Optional[Callable[[], httpx.AsyncClient]] = None,
+    ) -> None:
+        self._metrics = metrics
+        self._base_path = base_path
+        self._env_values = env_values
+        self._cli_defaults = dict(cli_defaults)
+        self._cli_defaults.setdefault("server", True)
+        self._tg = task_group
+        self._client_factory = client_factory
+        self._runner: AttackRunner | None = None
+        self._current_config: RuntimeConfig | None = None
+        self._current_attackmap: AttackMap | None = None
+        self._current_payload: Dict[str, Any] | None = None
+        self._metrics_started = False
+        self._lock = anyio.Lock()
+
+    def is_running(self) -> bool:
+        return self._runner is not None and self._runner.is_running()
+
+    async def start(
+        self,
+        *,
+        attackmap_payload: Optional[Dict[str, Any]],
+        override_config: Optional[Dict[str, Any]] = None,
+    ) -> RuntimeConfig:
+        async with self._lock:
+            payload = attackmap_payload or self._current_payload
+            if payload is None:
+                raise ConfigError("attackmap payload is required to start the runner")
+            errors, attack_map = _validate_attackmap_dict(payload)
+            if errors:
+                raise AttackMapValidationError(errors)
+
+            overrides = dict(override_config or {})
+            cli_values = dict(self._cli_defaults)
+            cli_values.update({key: value for key, value in overrides.items() if value is not None})
+
+            config = resolve_runtime_config(
+                attack_map=attack_map,
+                cli_values=cli_values,
+                env_values=self._env_values,
+            )
+
+            base_url = config.base_url_override or str(attack_map.target.base_url)
+            if not ensure_allowlist(base_url, config.allowlist):
+                msg = "Target base URL not covered by allowlist"
+                raise ConfigError(msg)
+
+            if not self._metrics_started and config.metrics_port:
+                start_metrics_server(config.metrics_port, self._metrics.registry)
+                self._metrics_started = True
+
+            if self._runner is not None:
+                await self._runner.stop()
+
+            runner = AttackRunner(
+                attack_map,
+                config,
+                metrics=self._metrics,
+                base_path=self._base_path,
+                client_factory=self._client_factory,
+            )
+            self._runner = runner
+            self._current_config = config
+            self._current_attackmap = attack_map
+            self._current_payload = payload
+            self._tg.start_soon(runner.run)
+            return config
+
+    async def stop(self) -> None:
+        async with self._lock:
+            if self._runner is None:
+                return
+            await self._runner.stop()
+            self._runner = None
 
 def configure_logging(fmt: LogFormat) -> None:
     logging.basicConfig(level=logging.INFO)
@@ -104,7 +189,7 @@ async def _read_attackmap_source(source: str) -> str:
 
 async def load_attack_map(path_or_url: str) -> AttackMap:
     raw = await _read_attackmap_source(path_or_url)
-    return AttackMap.model_validate_json(raw)
+    return _parse_attackmap_source(raw)
 
 
 def _parse_allowlist(value: Optional[str]) -> Optional[List[str]]:
@@ -149,19 +234,86 @@ def _load_attackmap_json(path_or_url: str) -> Dict[str, Any]:
         return json.load(handle)
 
 
+def _pointer(parts: Iterable[Any]) -> str:
+    tokens = [str(part) for part in parts]
+    pointer = "/" + "/".join(tokens)
+    return pointer if pointer != "/" else "/"
+
+
+class AttackMapValidationError(RuntimeError):
+    """Raised when schema or model validation fails."""
+
+    def __init__(self, errors: List[str]):
+        super().__init__("; ".join(errors))
+        self.errors = errors
+
+
+def _friendly_error_from_schema(error) -> str:
+    pointer = _pointer(error.path)
+    if error.validator == "enum":
+        allowed = ",".join(str(value) for value in error.validator_value)
+        message = f"expected one of [{allowed}]"
+    elif error.validator == "type":
+        expected = error.validator_value
+        message = f"expected type {expected}"
+    elif error.validator == "required":
+        missing = ",".join(sorted(error.validator_value))
+        message = f"missing required properties [{missing}]"
+    else:
+        message = error.message
+    return f"{pointer}: {message}"
+
+
+def _friendly_error_from_model(error: Dict[str, Any]) -> str:
+    pointer = _pointer(error.get("loc", []))
+    message = error.get("msg", "invalid value")
+    return f"{pointer}: {message}"
+
+
+def _validate_attackmap_dict(data: Dict[str, Any]) -> tuple[List[str], Optional[AttackMap]]:
+    validator = _schema_validator()
+    schema_errors = sorted(validator.iter_errors(data), key=lambda err: list(err.path))
+    errors = [_friendly_error_from_schema(error) for error in schema_errors]
+    if schema_errors:
+        return errors, None
+    try:
+        attack_map = AttackMap.model_validate(data)
+    except ValidationError as exc:
+        model_errors = [_friendly_error_from_model(item) for item in exc.errors()]
+        return model_errors, None
+    return [], attack_map
+
+
+def _parse_attackmap_source(raw: str) -> AttackMap:
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:  # pragma: no cover - handled in validate tests
+        raise AttackMapValidationError(["/: invalid JSON: %s" % exc.msg]) from exc
+
+    errors, attack_map = _validate_attackmap_dict(data)
+    if errors:
+        raise AttackMapValidationError(errors)
+    return attack_map
+
+
 @app.command()
 def validate(file: str) -> None:
     """Validate an AttackMap file against the schema."""
 
-    content = _load_attackmap_json(file)
-    validator = _schema_validator()
-    errors = sorted(validator.iter_errors(content), key=lambda e: e.path)
+    try:
+        content = _load_attackmap_json(file)
+    except json.JSONDecodeError as exc:
+        typer.echo(f"/: invalid JSON: {exc.msg}")
+        raise typer.Exit(code=1) from exc
+    except httpx.HTTPError as exc:
+        typer.echo(f"error fetching AttackMap: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    errors, _ = _validate_attackmap_dict(content)
     if errors:
-        for error in errors:
-            pointer = "/" + "/".join(str(part) for part in error.path)
-            typer.echo(f"{pointer or '/'}: {error.message}")
+        for message in errors:
+            typer.echo(message)
         raise typer.Exit(code=1)
-    typer.echo("AttackMap valid")
+    typer.echo("valid")
 
 
 def _build_cli_values(options: RunOptions) -> Dict[str, Any]:
@@ -186,73 +338,165 @@ def _build_cli_values(options: RunOptions) -> Dict[str, Any]:
 async def _run_async(options: RunOptions) -> None:
     if options.unsafe_override and not options.acknowledge_override:
         raise typer.Exit(code=2)
-    attack_map = await load_attack_map(options.attackmap)
     env_values = _env_values()
     cli_values = _build_cli_values(options)
-    config = resolve_runtime_config(attack_map=attack_map, cli_values=cli_values, env_values=env_values)
-    if options.base_url:
-        config.base_url_override = options.base_url
-    configure_logging(config.log_format)
-    base_url = config.base_url_override or str(attack_map.target.base_url)
-    if not ensure_allowlist(base_url, config.allowlist):
-        typer.echo("Target base URL not covered by allowlist", err=True)
-        raise typer.Exit(code=1)
+    log_format_value = cli_values.get("log_format") or env_values.get("log_format") or LogFormat.JSON.value
+    configure_logging(LogFormat(log_format_value))
     metrics = Metrics()
-    if not options.server and config.metrics_port:
-        start_metrics_server(config.metrics_port, metrics.registry)
-    runner = AttackRunner(attack_map, config, metrics=metrics, base_path=BASE_PATH)
 
-    async def _health() -> Dict[str, Any]:
-        return {"status": "running" if runner.is_running() else "stopped"}
+    if not options.server:
+        if not options.attackmap:
+            typer.echo("--attackmap is required in non-server mode", err=True)
+            raise typer.Exit(code=2)
+        attack_map = await load_attack_map(options.attackmap)
+        config = resolve_runtime_config(attack_map=attack_map, cli_values=cli_values, env_values=env_values)
+        if options.base_url:
+            config.base_url_override = options.base_url
+        base_url = config.base_url_override or str(attack_map.target.base_url)
+        if not ensure_allowlist(base_url, config.allowlist):
+            typer.echo("Target base URL not covered by allowlist", err=True)
+            raise typer.Exit(code=1)
+        if config.metrics_port:
+            start_metrics_server(config.metrics_port, metrics.registry)
+        runner = AttackRunner(attack_map, config, metrics=metrics, base_path=BASE_PATH)
 
-    async def _start_endpoint(payload: Dict[str, Any]) -> Dict[str, Any]:
-        return {"status": "running"}
+        async def _watch_signals() -> None:
+            try:
+                with anyio.open_signal_receiver(signal.SIGINT, signal.SIGTERM) as signals:
+                    async for _ in signals:
+                        await runner.stop()
+                        break
+            except (NotImplementedError, RuntimeError):  # pragma: no cover - platform guard
+                return
 
-    async def _stop_endpoint() -> None:
-        await runner.stop()
-
-    try:
-        if options.server:
-            if not container_control_adapter.available():
-                typer.echo("container-control not installed; control server disabled", err=True)
-                raise typer.Exit(code=1)
-            port = config.metrics_port or 9102
-            control_server = ControlServer(
-                port=port,
-                on_start=_start_endpoint,
-                on_stop=_stop_endpoint,
-                health_probe=_health,
-                metrics=metrics,
-            )
+        try:
             async with anyio.create_task_group() as tg:
-                tg.start_soon(control_server.run)
-                await runner.run()
-                await control_server.stop()
-        else:
-            await runner.run()
-    except KeyboardInterrupt:
-        await runner.stop()
-        raise
+                shutdown_event = anyio.Event()
+
+                async def _signal_task() -> None:
+                    await _watch_signals()
+                    shutdown_event.set()
+
+                tg.start_soon(_signal_task)
+                tg.start_soon(runner.run)
+                await shutdown_event.wait()
+        except KeyboardInterrupt:
+            await runner.stop()
+            raise
+        return
+
+    if not container_control_adapter.available():
+        typer.echo("container-control not installed; control server disabled", err=True)
+        raise typer.Exit(code=1)
+
+    cli_values.setdefault("server", True)
+    shutdown_event = anyio.Event()
+
+    async with anyio.create_task_group() as tg:
+        manager = RunnerManager(
+            metrics=metrics,
+            base_path=BASE_PATH,
+            env_values=env_values,
+            cli_defaults=cli_values,
+            task_group=tg,
+        )
+
+        async def _watch_signals_server() -> None:
+            try:
+                with anyio.open_signal_receiver(signal.SIGINT, signal.SIGTERM) as signals:
+                    async for _ in signals:
+                        await manager.stop()
+                        shutdown_event.set()
+                        break
+            except (NotImplementedError, RuntimeError):  # pragma: no cover - platform guard
+                return
+
+        async def _health() -> Dict[str, Any]:
+            return {"status": "running" if manager.is_running() else "stopped"}
+
+        async def _start_endpoint(payload: Dict[str, Any]) -> Dict[str, Any]:
+            try:
+                config = await manager.start(
+                    attackmap_payload=payload.get("attackmap"),
+                    override_config=payload.get("config"),
+                )
+            except AttackMapValidationError as exc:
+                from fastapi import HTTPException
+
+                raise HTTPException(status_code=400, detail=exc.errors) from exc
+            except ConfigError as exc:
+                from fastapi import HTTPException
+
+                raise HTTPException(status_code=400, detail=[str(exc)]) from exc
+            return {"status": "running", "qps": config.qps}
+
+        async def _stop_endpoint() -> None:
+            await manager.stop()
+
+        port_override = cli_values.get("metrics_port") or env_values.get("metrics_port")
+        control_server = ControlServer(
+            port=port_override or 9102,
+            on_start=_start_endpoint,
+            on_stop=_stop_endpoint,
+            health_probe=_health,
+            metrics=metrics,
+        )
+
+        tg.start_soon(control_server.run)
+        tg.start_soon(_watch_signals_server)
+
+        if options.attackmap:
+            try:
+                raw = await _read_attackmap_source(options.attackmap)
+                initial_payload = json.loads(raw)
+                await manager.start(attackmap_payload=initial_payload, override_config=None)
+            except json.JSONDecodeError as exc:
+                typer.echo(f"/: invalid JSON: {exc.msg}", err=True)
+                raise typer.Exit(code=1) from exc
+            except AttackMapValidationError as exc:
+                for message in exc.errors:
+                    typer.echo(message, err=True)
+                raise typer.Exit(code=1)
+            except ConfigError as exc:
+                typer.echo(str(exc), err=True)
+                raise typer.Exit(code=1)
+
+        try:
+            await shutdown_event.wait()
+        finally:
+            await manager.stop()
+            await control_server.stop()
+            tg.cancel_scope.cancel()
+
 
 
 @app.command()
 def run(
-    attackmap: str = typer.Option(..., help="Path or URL to the AttackMap"),
+    attackmap: Optional[str] = typer.Option(
+        None, help="Path or URL to the AttackMap (required unless --server)", show_default=False
+    ),
     allowlist: Optional[str] = typer.Option(None, help="Domain allowlist (comma-separated)"),
     base_url: Optional[str] = typer.Option(None, help="Override base URL"),
-    qps: Optional[int] = typer.Option(None, help="Global QPS cap"),
-    concurrency: Optional[int] = typer.Option(None, help="Concurrency level"),
-    xff: Optional[str] = typer.Option(None, help="Forwarded header name"),
+    qps: Optional[int] = typer.Option(None, help="Global QPS cap (default 5; capped by map)"),
+    concurrency: Optional[int] = typer.Option(None, help="Concurrency level (default 20)"),
+    xff: Optional[str] = typer.Option(None, help="Forwarded header name (default client-ip)"),
     ip_pool: Optional[str] = typer.Option(None, help="IP pool selector"),
     ua_group: Optional[str] = typer.Option(None, help="UA group override"),
-    metrics_port: Optional[int] = typer.Option(9102, help="Metrics/Server port"),
-    log_format: str = typer.Option("json", help="Log format"),
+    metrics_port: Optional[int] = typer.Option(
+        None, help="Metrics/Server port (default 9102; 0 disables)", show_default=False
+    ),
+    log_format: Optional[str] = typer.Option(
+        None, help="Log format (json or text; default json)", show_default=False
+    ),
     seed: Optional[int] = typer.Option(None, help="Deterministic seed"),
     unsafe_override: bool = typer.Option(False, help="Enable unsafe overrides"),
     i_know_what_im_doing: bool = typer.Option(False, help="Confirm unsafe override"),
     server: bool = typer.Option(False, help="Enable container-control server"),
     operator: Optional[str] = typer.Option(None, help="Operator name for audit banner"),
 ) -> None:
+    if not server and not attackmap:
+        typer.echo("--attackmap is required unless --server is enabled", err=True)
+        raise typer.Exit(code=2)
     allowlist_values = _parse_allowlist(allowlist)
     options = RunOptions(
         attackmap=attackmap,
@@ -297,7 +541,7 @@ def dry_run(
         ip_pool=None,
         ua_group=None,
         metrics_port=0,
-        log_format="json",
+        log_format=LogFormat.JSON.value,
         seed=seed,
         unsafe_override=False,
         acknowledge_override=False,

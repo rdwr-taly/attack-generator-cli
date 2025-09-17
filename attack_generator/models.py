@@ -231,6 +231,17 @@ class RuntimeSettings(BaseModel):
             raise ValueError(msg)
         return value
 
+    @field_validator("cookie_jar")
+    @classmethod
+    def _validate_cookie_scope(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return value
+        allowed = {"per_ip", "per_scenario", "shared"}
+        if value not in allowed:
+            msg = f"cookie_jar must be one of {sorted(allowed)}"
+            raise ValueError(msg)
+        return value
+
 
 class AttackMap(BaseModel):
     """Root AttackMap document."""
@@ -269,6 +280,18 @@ class LogFormat(str, enum.Enum):
     TEXT = "text"
 
 
+DEFAULT_QPS = 5
+DEFAULT_CONCURRENCY = 20
+DEFAULT_METRICS_PORT = 9102
+
+
+def _first_non_none(*values: Any) -> Any:
+    for value in values:
+        if value is not None:
+            return value
+    return None
+
+
 @dataclass(slots=True)
 class RuntimeConfig:
     """Runtime configuration resolved from CLI/env/map."""
@@ -278,7 +301,8 @@ class RuntimeConfig:
     concurrency: int
     xff: str
     ip_pool: Optional[str]
-    ua_group: Optional[str]
+    ua_group_override: Optional[str]
+    map_ua_group: Optional[str]
     metrics_port: int
     log_format: LogFormat
     seed: Optional[int]
@@ -302,14 +326,6 @@ def merge_allowlist(cli: Optional[List[str]], env: Optional[List[str]], from_map
     return from_map
 
 
-def select_ua_group(cli: Optional[str], env: Optional[str], map_group: Optional[str]) -> Optional[str]:
-    if cli:
-        return cli
-    if env:
-        return env
-    return map_group
-
-
 def resolve_runtime_config(
     *,
     attack_map: AttackMap,
@@ -326,37 +342,57 @@ def resolve_runtime_config(
         msg = "allowlist is required"
         raise ConfigError(msg)
 
-    qps = cli_values.get("qps") or env_values.get("qps") or attack_map.safety.global_rps_cap
-
     unsafe = bool(cli_values.get("unsafe_override") or env_values.get("unsafe_override"))
 
-    if not unsafe and qps > attack_map.safety.global_rps_cap:
-        qps = attack_map.safety.global_rps_cap
+    requested_qps = _first_non_none(cli_values.get("qps"), env_values.get("qps"))
+    qps = int(requested_qps) if requested_qps is not None else DEFAULT_QPS
+    if qps <= 0:
+        msg = "qps must be > 0"
+        raise ConfigError(msg)
 
-    concurrency = (
-        cli_values.get("concurrency")
-        or env_values.get("concurrency")
-        or attack_map.runtime.concurrency
-        or 1
+    if not unsafe:
+        cap = attack_map.safety.global_rps_cap
+        qps = min(qps, cap)
+        for scenario in attack_map.scenarios:
+            if scenario.rate and scenario.rate.qps > cap:
+                msg = (
+                    f"scenario '{scenario.id}' rate.qps {scenario.rate.qps} exceeds safety cap {cap}; "
+                    "enable --unsafe-override to continue"
+                )
+                raise ConfigError(msg)
+
+    requested_concurrency = _first_non_none(
+        cli_values.get("concurrency"), env_values.get("concurrency"), attack_map.runtime.concurrency
     )
+    concurrency = int(requested_concurrency) if requested_concurrency is not None else DEFAULT_CONCURRENCY
+    if concurrency <= 0:
+        msg = "concurrency must be > 0"
+        raise ConfigError(msg)
 
-    xff = cli_values.get("xff") or env_values.get("xff") or attack_map.target.xff_header
-    ip_pool = cli_values.get("ip_pool") or env_values.get("ip_pool")
-    ua_group = select_ua_group(
-        cli_values.get("ua_group"), env_values.get("ua_group"), attack_map.presets.ua_group if attack_map.presets else None
+    xff = _first_non_none(cli_values.get("xff"), env_values.get("xff"), attack_map.target.xff_header)
+    ip_pool = _first_non_none(cli_values.get("ip_pool"), env_values.get("ip_pool"))
+    ua_group_override = _first_non_none(cli_values.get("ua_group"), env_values.get("ua_group"))
+    map_ua_group = attack_map.presets.ua_group if attack_map.presets else None
+    metrics_port_raw = _first_non_none(
+        cli_values.get("metrics_port"), env_values.get("metrics_port"), DEFAULT_METRICS_PORT
     )
-    metrics_port = cli_values.get("metrics_port") or env_values.get("metrics_port") or 9102
+    metrics_port = int(metrics_port_raw)
+    if metrics_port < 0:
+        msg = "metrics_port must be >= 0"
+        raise ConfigError(msg)
 
-    log_format_raw = cli_values.get("log_format") or env_values.get("log_format") or LogFormat.JSON.value
+    log_format_raw = _first_non_none(
+        cli_values.get("log_format"), env_values.get("log_format"), LogFormat.JSON.value
+    )
 
     try:
         log_format = LogFormat(log_format_raw)
     except ValueError as exc:  # pragma: no cover - defensive guard
         raise ConfigError(f"invalid log format: {log_format_raw}") from exc
 
-    seed = cli_values.get("seed") or env_values.get("seed")
-    base_url_override = cli_values.get("base_url") or env_values.get("base_url")
-    operator = cli_values.get("operator") or env_values.get("operator")
+    seed = _first_non_none(cli_values.get("seed"), env_values.get("seed"))
+    base_url_override = _first_non_none(cli_values.get("base_url"), env_values.get("base_url"))
+    operator = _first_non_none(cli_values.get("operator"), env_values.get("operator"))
     server_enabled = bool(cli_values.get("server"))
 
     return RuntimeConfig(
@@ -365,7 +401,8 @@ def resolve_runtime_config(
         concurrency=int(concurrency),
         xff=xff,
         ip_pool=ip_pool,
-        ua_group=ua_group,
+        ua_group_override=ua_group_override,
+        map_ua_group=map_ua_group,
         metrics_port=int(metrics_port),
         log_format=log_format,
         seed=seed if seed is None else int(seed),

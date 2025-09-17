@@ -3,7 +3,13 @@ from __future__ import annotations
 import time
 from typing import Any, Dict, List
 
+
 from prometheus_client import CollectorRegistry, Counter, Gauge, generate_latest, start_http_server
+
+try:  # pragma: no cover - psutil is optional at runtime
+    import psutil
+except ImportError:  # pragma: no cover - fallback when psutil unavailable
+    psutil = None
 
 
 class Metrics:
@@ -12,26 +18,26 @@ class Metrics:
     def __init__(self, registry: CollectorRegistry | None = None) -> None:
         self.registry = registry or CollectorRegistry()
         self.attack_rps = Gauge("attack_rps", "Current attack rate", registry=self.registry)
-        self.attack_sent_total = Counter(
-            "attack_sent_total",
+        self.attack_sent_counter = Counter(
+            "attack_sent",
             "Total attacks dispatched",
             ["attack_id", "category"],
             registry=self.registry,
         )
-        self.http_status_total = Counter(
-            "http_status_total",
+        self.http_status_counter = Counter(
+            "http_status",
             "HTTP responses by status code",
             ["code"],
             registry=self.registry,
         )
-        self.scenario_sent_total = Counter(
-            "scenario_sent_total",
+        self.scenario_sent_counter = Counter(
+            "scenario_sent",
             "Scenario dispatch count",
             ["scenario_id"],
             registry=self.registry,
         )
-        self.errors_total = Counter(
-            "errors_total",
+        self.errors_counter = Counter(
+            "errors",
             "Errors by type",
             ["type"],
             registry=self.registry,
@@ -50,14 +56,14 @@ class Metrics:
         self._window_start = time.monotonic()
 
     def observe_success(self, attack_id: str, category: str, status_code: int, scenario_id: str | None) -> None:
-        self.attack_sent_total.labels(attack_id=attack_id, category=category).inc()
-        self.http_status_total.labels(code=str(status_code)).inc()
+        self.attack_sent_counter.labels(attack_id=attack_id, category=category).inc()
+        self.http_status_counter.labels(code=str(status_code)).inc()
         if scenario_id:
-            self.scenario_sent_total.labels(scenario_id=scenario_id).inc()
+            self.scenario_sent_counter.labels(scenario_id=scenario_id).inc()
         self._record_rps()
 
     def observe_error(self, error_type: str) -> None:
-        self.errors_total.labels(type=error_type).inc()
+        self.errors_counter.labels(type=error_type).inc()
         self._record_rps()
 
     def _record_rps(self) -> None:
@@ -70,19 +76,32 @@ class Metrics:
             self._window_count = 0
             self._window_start = now
 
+    def sample_system(self) -> None:
+        """Populate CPU and memory gauges."""
+
+        if psutil is not None:
+            try:
+                self.system_cpu_percent.set(float(psutil.cpu_percent(interval=None)))
+                self.system_mem_percent.set(float(psutil.virtual_memory().percent))
+                return
+            except Exception:  # pragma: no cover - defensive guard when psutil misbehaves
+                pass
+        self.system_cpu_percent.set(0.0)
+        self.system_mem_percent.set(0.0)
+
     def json_snapshot(self) -> Dict[str, Any]:
         snapshot: Dict[str, Any] = {}
         for metric in self.registry.collect():
-            samples: List[Dict[str, Any]] = []
             for sample in metric.samples:
-                samples.append(
+                if sample.name.endswith("_created"):
+                    continue
+                snapshot.setdefault(sample.name, []).append(
                     {
                         "name": sample.name,
                         "labels": sample.labels,
                         "value": sample.value,
                     }
                 )
-            snapshot[metric.name] = samples
         return snapshot
 
 
