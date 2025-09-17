@@ -1,0 +1,76 @@
+# Build context pruning
+
+# Version control
+.git
+.gitmodules
+
+# Python bytecode / cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Packaging & build artifacts
+.build/
+build/
+dist/
+downloads/
+.eggs/
+*.egg-info/
+.wheels/
+pip-wheel-metadata/
+*.egg
+MANIFEST
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.pytest_cache/
+.hypothesis/
+
+# Type checker caches
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+
+# Lint caches
+ruff_cache/
+
+# IDE / editor settings
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS / Misc
+.DS_Store
+Thumbs.db
+
+# Local overrides & scratch
+scratch/
+*.tmp
+*.bak
+
+# Generated docs
+site/
+_docs_build/
+
+# Docker Compose overrides
+docker-compose.override.yml
