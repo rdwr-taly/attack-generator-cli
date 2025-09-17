@@ -135,7 +135,7 @@ class RunnerManager:
                 msg = "Target base URL not covered by allowlist"
                 raise ConfigError(msg)
 
-            if not self._metrics_started and config.metrics_port:
+            if not self._metrics_started and config.metrics_port and not config.server_enabled:
                 start_metrics_server(config.metrics_port, self._metrics.registry)
                 self._metrics_started = True
 
@@ -356,7 +356,7 @@ async def _run_async(options: RunOptions) -> None:
         if not ensure_allowlist(base_url, config.allowlist):
             typer.echo("Target base URL not covered by allowlist", err=True)
             raise typer.Exit(code=1)
-        if config.metrics_port:
+        if config.metrics_port and not config.server_enabled:
             start_metrics_server(config.metrics_port, metrics.registry)
         runner = AttackRunner(attack_map, config, metrics=metrics, base_path=BASE_PATH)
 
