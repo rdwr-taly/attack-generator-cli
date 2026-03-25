@@ -1,0 +1,76 @@
+{
+  "$schema": "showrunner/v1",
+  "id": "attack-generator-cli",
+  "name": "Attack Generator CLI",
+  "description": "Configurable HTTP attack traffic generator with templating, scenario support, and cookie jar validation.",
+  "category": "Security Tools",
+  "subCategory": "Attack Simulation",
+  "icon": "fas fa-crosshairs",
+  "lifecycle": "long-running",
+  "image": {
+    "name": "razor29/attack-generator-cli"
+  },
+  "sdk": {
+    "version": ">=0.1.0",
+    "metrics_port": 9090,
+    "health_path": "/healthz",
+    "metrics_path": "/metrics"
+  },
+  "config_schema": {
+    "type": "object",
+    "properties": {
+      "attackmap": {
+        "type": "object",
+        "title": "Attack Map",
+        "description": "Attack definition with scenarios, targets, and parameters"
+      },
+      "config": {
+        "type": "object",
+        "title": "Override Configuration",
+        "properties": {
+          "qps": {
+            "type": "integer",
+            "title": "QPS Cap",
+            "default": 5
+          },
+          "concurrency": {
+            "type": "integer",
+            "title": "Concurrency",
+            "default": 20
+          },
+          "base_url": {
+            "type": "string",
+            "title": "Base URL Override"
+          },
+          "allowlist": {
+            "type": "array",
+            "title": "Domain Allowlist",
+            "items": {"type": "string"}
+          }
+        }
+      }
+    },
+    "required": ["attackmap"]
+  },
+  "ui": {
+    "sections": [
+      {
+        "title": "Attack Configuration",
+        "fields": ["attackmap", "config.base_url", "config.allowlist"]
+      },
+      {
+        "title": "Rate Control",
+        "fields": ["config.qps", "config.concurrency"]
+      }
+    ],
+    "card_fields": {
+      "primary_label": "config.base_url",
+      "metrics": ["attack_rps", "requests_total"]
+    }
+  },
+  "capabilities": {
+    "can_stop": true,
+    "can_redeploy": true,
+    "can_resume": false
+  }
+}
