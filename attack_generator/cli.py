@@ -161,6 +161,34 @@ class RunnerManager:
             await self._runner.stop()
             self._runner = None
 
+    async def restart(self, new_cfg: Dict[str, Any]) -> None:
+        """Stop current workload, apply new config, and restart.
+
+        Called when the SDK fires a config-reload callback (SIGHUP).
+        Gracefully tears down the running AttackRunner and starts a fresh
+        one with the updated attackmap / override config.
+        """
+        LOGGER.info("Config reload — stopping current workload")
+        await self.stop()
+
+        attackmap_payload = new_cfg.get("attackmap")
+        override_config = new_cfg.get("config")
+
+        if not attackmap_payload and self._current_payload is None:
+            LOGGER.warning("Reloaded config has no attackmap and no previous payload — staying idle")
+            return
+
+        try:
+            config = await self.start(
+                attackmap_payload=attackmap_payload,
+                override_config=override_config,
+            )
+            LOGGER.info("Workload restarted with reloaded config (qps=%s, concurrency=%s)",
+                        config.qps, config.concurrency)
+        except (AttackMapValidationError, ConfigError) as exc:
+            LOGGER.error("Failed to restart after config reload: %s", exc)
+            raise
+
 def configure_logging(fmt: LogFormat) -> None:
     logging.basicConfig(level=logging.INFO)
     handler = logging.StreamHandler(sys.stdout)
@@ -451,12 +479,36 @@ async def _run_async(options: RunOptions) -> None:
             LOGGER.info("No attackmap in config — waiting for config reload via SIGHUP")
             sr_health.set_status("running")
 
-        # Register SIGHUP reload callback (config reloaded automatically by SDK)
+        # Register SIGHUP reload callback.
+        # The SDK calls this synchronously from the signal handler, so we
+        # stash the new config and signal an anyio.Event that the async
+        # reload loop (below) picks up to perform the actual restart.
+        _pending_reload_cfg: Dict[str, Any] = {}
+        _reload_event_holder: List[anyio.Event] = [anyio.Event()]
+
         def _on_config_reload(new_cfg: Dict[str, Any]) -> None:
-            LOGGER.info("Config reloaded (%d keys) — will apply on next container restart",
-                        len(new_cfg))
+            LOGGER.info("Config reloaded (%d keys) — scheduling workload restart", len(new_cfg))
+            _pending_reload_cfg.clear()
+            _pending_reload_cfg.update(new_cfg)
+            _reload_event_holder[0].set()
 
         sr_config.on_reload(_on_config_reload)
+
+        async def _reload_loop() -> None:
+            """Watch for config-reload signals and restart the manager."""
+            while not shutdown_event.is_set():
+                await _reload_event_holder[0].wait()
+                _reload_event_holder[0] = anyio.Event()  # reset for next reload
+                if shutdown_event.is_set():
+                    break
+                try:
+                    await manager.restart(dict(_pending_reload_cfg))
+                    sr_health.set_status("running")
+                except (AttackMapValidationError, ConfigError) as exc:
+                    LOGGER.error("Reload failed: %s — previous workload stopped", exc)
+                    sr_health.set_status("error", reason=str(exc))
+
+        tg.start_soon(_reload_loop)
 
         try:
             await shutdown_event.wait()

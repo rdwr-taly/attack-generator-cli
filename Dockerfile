@@ -32,6 +32,10 @@ EXPOSE 9090
 ENV AG_LOG_FORMAT=json
 
 ENTRYPOINT ["attack-generator"]
+# --server activates ShowRunner SDK mode (config injection, SIGHUP reload,
+# Prometheus metrics on :9090, /healthz endpoint).  Without this flag the
+# app runs as a standalone CLI and the SDK is never imported.  The
+# orchestrator MUST always pass --server when deploying this container.
 CMD ["run", "--server"]
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \

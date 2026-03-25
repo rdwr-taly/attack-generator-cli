@@ -14,7 +14,8 @@
     "version": ">=0.1.0",
     "metrics_port": 9090,
     "health_path": "/healthz",
-    "metrics_path": "/metrics"
+    "metrics_path": "/metrics",
+    "notes": "The container CMD must include --server to activate SDK mode. Without --server the app runs as a standalone CLI and the SDK is not imported. The orchestrator must always pass --server."
   },
   "config_schema": {
     "type": "object",
