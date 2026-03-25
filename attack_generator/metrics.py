@@ -16,7 +16,17 @@ class Metrics:
     """Prometheus-backed metrics helper."""
 
     def __init__(self, registry: CollectorRegistry | None = None) -> None:
-        self.registry = registry or CollectorRegistry()
+        if registry is not None:
+            self.registry = registry
+        else:
+            # In ShowRunner (server) mode, use the SDK registry so all
+            # app-specific metrics appear on the same /metrics endpoint.
+            # In CLI mode the SDK is unused so fall back to a private registry.
+            try:
+                from showrunner_sdk import metrics as sr_metrics
+                self.registry = sr_metrics.registry
+            except ImportError:
+                self.registry = CollectorRegistry()
         self.attack_rps = Gauge("attack_rps", "Current attack rate", registry=self.registry)
         self.attack_sent_counter = Counter(
             "attack_sent",

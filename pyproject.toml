@@ -15,7 +15,7 @@ dependencies = [
   "prometheus-client>=0.19",
   "pydantic>=2.5",
   "typer>=0.9",
-  "container-control>=1.1",
+  "showrunner-sdk[full]>=0.1.0",
   "trio>=0.22",
 ]
 
