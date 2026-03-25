@@ -477,7 +477,7 @@ async def _run_async(options: RunOptions) -> None:
                 raise typer.Exit(code=1)
         else:
             LOGGER.info("No attackmap in config — waiting for config reload via SIGHUP")
-            sr_health.set_status("running")
+            sr_health.set_status("idle")
 
         # Register SIGHUP reload callback.
         # The SDK calls this synchronously from the signal handler, so we
