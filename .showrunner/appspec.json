@@ -1,77 +1,116 @@
 {
-  "$schema": "showrunner/v1",
   "id": "attack-generator-cli",
-  "name": "Attack Generator CLI",
-  "description": "Configurable HTTP attack traffic generator with templating, scenario support, and cookie jar validation.",
+  "displayName": "Attack Generator CLI",
+  "description": "Configurable HTTP attack traffic generator with templating, scenario support, and cookie jar validation. Uses ShowRunner SDK for orchestration.",
   "category": "Security Tools",
   "subCategory": "Attack Simulation",
   "icon": "fas fa-crosshairs",
-  "lifecycle": "long-running",
-  "image": {
-    "name": "razor29/attack-generator-cli"
-  },
-  "sdk": {
-    "version": ">=0.1.0",
-    "metrics_port": 9090,
-    "health_path": "/healthz",
-    "metrics_path": "/metrics",
-    "notes": "The container CMD must include --server to activate SDK mode. Without --server the app runs as a standalone CLI and the SDK is not imported. The orchestrator must always pass --server."
-  },
-  "config_schema": {
-    "type": "object",
-    "properties": {
-      "attackmap": {
-        "type": "object",
-        "title": "Attack Map",
-        "description": "Attack definition with scenarios, targets, and parameters"
-      },
-      "config": {
-        "type": "object",
-        "title": "Override Configuration",
-        "properties": {
-          "qps": {
-            "type": "integer",
-            "title": "QPS Cap",
-            "default": 5
-          },
-          "concurrency": {
-            "type": "integer",
-            "title": "Concurrency",
-            "default": 20
-          },
-          "base_url": {
-            "type": "string",
-            "title": "Base URL Override"
-          },
-          "allowlist": {
-            "type": "array",
-            "title": "Domain Allowlist",
-            "items": {"type": "string"}
-          }
-        }
-      }
-    },
-    "required": ["attackmap"]
-  },
-  "ui": {
-    "sections": [
-      {
-        "title": "Attack Configuration",
-        "fields": ["attackmap", "config.base_url", "config.allowlist"]
-      },
-      {
-        "title": "Rate Control",
-        "fields": ["config.qps", "config.concurrency"]
-      }
+  "deploymentContext": "app",
+  "image_id_ref": "razor29/attack-generator-cli",
+  "taskLifecycle": "stateful",
+  "schema_version": 6,
+  "deployment": {
+    "container_command_template": [
+      "python", "-m", "attack_generator", "--server"
     ],
-    "card_fields": {
-      "primary_label": "config.base_url",
-      "metrics": ["attack_rps", "requests_total"]
-    }
+    "default_env_vars": [
+      {
+        "label": "Select Attack Map",
+        "name": "ATTACKMAP_ID",
+        "required": true,
+        "type": "string",
+        "ui_type": "attackmap_select"
+      },
+      {
+        "label": "Base URL Override",
+        "name": "BASE_URL",
+        "type": "string",
+        "tooltip": "Override the base URL from the attack map"
+      },
+      {
+        "label": "QPS Cap",
+        "name": "QPS",
+        "type": "integer",
+        "default_value": 5,
+        "tooltip": "Maximum queries per second"
+      },
+      {
+        "label": "Concurrency",
+        "name": "CONCURRENCY",
+        "type": "integer",
+        "default_value": 20,
+        "tooltip": "Number of concurrent attack threads"
+      },
+      {
+        "label": "Domain Allowlist",
+        "name": "ALLOWLIST",
+        "type": "string",
+        "tooltip": "Comma-separated list of allowed domains"
+      },
+      {
+        "label": "Debug Mode",
+        "name": "DEBUG",
+        "type": "boolean",
+        "default_value": false
+      }
+    ]
   },
   "capabilities": {
     "can_stop": true,
     "can_redeploy": true,
-    "can_resume": false
+    "can_resume": false,
+    "can_update_while_running": false
+  },
+  "monitoring": {
+    "prometheus": {
+      "enabled": true,
+      "scrape_path": "/metrics",
+      "scrape_port_number": 9090
+    }
+  },
+  "ui": {
+    "card_basic_metrics": [
+      {
+        "label": "CPU",
+        "source_path": "system.cpu_percent",
+        "unit": "%",
+        "max_value": 100
+      },
+      {
+        "label": "Memory",
+        "source_path": "system.memory_percent",
+        "unit": "%",
+        "max_value": 100
+      }
+    ],
+    "card_info_fields": [
+      {
+        "label": "Base URL",
+        "source_key": "BASE_URL",
+        "source_type": "env_var"
+      }
+    ],
+    "card_primary_metric": {
+      "label": "RPS",
+      "source_path": "adapter_metrics.attack_rps",
+      "unit": "rps"
+    },
+    "card_secondary_metrics": [
+      {
+        "label": "Total Requests",
+        "source_path": "adapter_metrics.requests_total",
+        "unit": ""
+      }
+    ],
+    "deployment_form_sections": [
+      {
+        "title": "Attack Configuration",
+        "fields": ["ATTACKMAP_ID", "BASE_URL", "ALLOWLIST"]
+      },
+      {
+        "title": "Rate Control",
+        "fields": ["QPS", "CONCURRENCY", "DEBUG"]
+      }
+    ]
   }
 }
