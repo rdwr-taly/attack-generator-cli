@@ -10,9 +10,6 @@
   "taskLifecycle": "stateful",
   "schema_version": 6,
   "deployment": {
-    "container_command_template": [
-      "python", "-m", "attack_generator", "--server"
-    ],
     "default_env_vars": [
       {
         "label": "Select Attack Map",
