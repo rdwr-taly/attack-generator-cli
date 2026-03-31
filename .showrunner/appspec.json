@@ -89,13 +89,13 @@
     ],
     "card_primary_metric": {
       "label": "RPS",
-      "source_path": "adapter_metrics.attack_rps",
+      "source_path": "attack_rps",
       "unit": "rps"
     },
     "card_secondary_metrics": [
       {
         "label": "Total Requests",
-        "source_path": "adapter_metrics.requests_total",
+        "source_path": "attack_sent_total",
         "unit": ""
       }
     ],
