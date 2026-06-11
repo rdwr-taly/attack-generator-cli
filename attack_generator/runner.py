@@ -319,7 +319,9 @@ class AttackRunner:
                 "attack_id": attack.id,
                 "scenario_id": scenario.id if scenario else None,
                 "error": type(exc).__name__,
-                "message": str(exc),
+                # NOT "message": that key is reserved by logging.LogRecord and
+                # raises KeyError("Attempt to overwrite 'message'") -> crash.
+                "error_detail": str(exc),
             },
         )
 

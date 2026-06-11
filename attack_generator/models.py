@@ -316,13 +316,29 @@ class ConfigError(RuntimeError):
     """Configuration resolution error."""
 
 
+def _coerce_allowlist(value: Any) -> Optional[List[str]]:
+    """Normalise an allowlist override to a list of patterns.
+
+    ShowRunner passes the override as a comma-separated string (e.g.
+    ``"*.radware.net"``); without this it was iterated character-by-character
+    into ``['*', '.', 'r', ...]`` and matched nothing.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return [part.strip() for part in value.split(",") if part.strip()]
+    return [str(part).strip() for part in value if str(part).strip()]
+
+
 def merge_allowlist(cli: Optional[List[str]], env: Optional[List[str]], from_map: List[str]) -> List[str]:
     """Merge allowlist with precedence and ensure not empty."""
 
-    if cli:
-        return cli
-    if env:
-        return env
+    cli_list = _coerce_allowlist(cli)
+    env_list = _coerce_allowlist(env)
+    if cli_list:
+        return cli_list
+    if env_list:
+        return env_list
     return from_map
 
 
