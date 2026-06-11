@@ -10,6 +10,15 @@
   "taskLifecycle": "stateful",
   "schema_version": 6,
   "deployment": {
+    "sdk_config_template": {
+      "attackmap": "{{attackmap_json_for_env.ATTACKMAP_ID}}",
+      "config": {
+        "qps": "{{env.QPS}}",
+        "concurrency": "{{env.CONCURRENCY}}",
+        "base_url": "{{env.BASE_URL}}",
+        "allowlist": "{{env.ALLOWLIST}}"
+      }
+    },
     "default_env_vars": [
       {
         "label": "Select Attack Map",
