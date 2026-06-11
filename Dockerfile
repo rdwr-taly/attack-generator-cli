@@ -14,7 +14,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY pyproject.toml README.md prd.md ./
 COPY attack_generator ./attack_generator
-COPY schemas ./schemas
 COPY examples ./examples
 COPY tools ./tools
 

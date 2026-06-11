@@ -32,6 +32,12 @@ line-length = 100
 [tool.setuptools.packages.find]
 include = ["attack_generator*"]
 
+[tool.setuptools.package-data]
+# Ship data files inside the installed package so the console script (which
+# imports from site-packages) can find them. Without this the attackmap schema
+# was missing at runtime and validation crashed the runner.
+attack_generator = ["schemas/*.json", "builtins/*.json"]
+
 [build-system]
 requires = ["setuptools>=67", "wheel"]
 build-backend = "setuptools.build_meta"

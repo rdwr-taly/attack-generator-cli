@@ -244,7 +244,10 @@ def _env_values() -> Dict[str, Any]:
 
 @lru_cache(maxsize=1)
 def _schema_validator() -> Draft7Validator:
-    schema_path = BASE_PATH.parent / "schemas" / "attackmap.schema.json"
+    # Schema ships inside the package (like builtins/) so it resolves when the
+    # console script imports attack_generator from site-packages. The old
+    # BASE_PATH.parent path only worked when running from a source checkout.
+    schema_path = BASE_PATH / "schemas" / "attackmap.schema.json"
     with schema_path.open("r", encoding="utf-8") as handle:
         schema = json.load(handle)
     return Draft7Validator(schema)
