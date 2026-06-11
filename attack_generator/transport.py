@@ -69,8 +69,12 @@ class AttackTransport:
     def _new_client(self) -> httpx.AsyncClient:
         if self._client_factory:
             return self._client_factory()
-        limits = None
-        if not self._session_reuse:
+        # httpx.AsyncClient(limits=None) breaks: the connection pool does
+        # limits.max_connections -> AttributeError on None, failing every send.
+        # Use the default Limits when not disabling keepalive.
+        if self._session_reuse:
+            limits = httpx.Limits()
+        else:
             limits = httpx.Limits(max_keepalive_connections=0, keepalive_expiry=0)
         return httpx.AsyncClient(base_url=self._base_url, timeout=httpx.Timeout(10.0), limits=limits)
 
