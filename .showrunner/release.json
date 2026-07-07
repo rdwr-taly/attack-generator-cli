@@ -2,7 +2,7 @@
   "image": "razor29/attack-generator-cli:v1.1.0-sr3",
   "version": "v1.1.0-sr3",
   "is_latest": false,
-  "released_at": "2026-07-07T00:00:00Z",
-  "commit": "",
-  "changelog": "SR3 pilot: write /report/report.json (measures + mitigation playbook) for ShowRunner pull."
+  "released_at": "2026-07-07T08:16:50Z",
+  "commit": "04337cbbf08b3fa8f428e1b1926a555611b81564",
+  "changelog": ""
 }
