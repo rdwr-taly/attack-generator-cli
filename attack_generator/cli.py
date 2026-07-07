@@ -365,6 +365,25 @@ def _build_cli_values(options: RunOptions) -> Dict[str, Any]:
 
 
 async def _run_async(options: RunOptions) -> None:
+    """Run the workload, then (SR3) write the report on ANY exit path.
+
+    A thin wrapper over ``_run_async_impl`` so the report is emitted exactly once
+    at shutdown — normal completion, SIGTERM/SIGINT, or an error — from the
+    metrics gathered during the run. Report-writing is best-effort and never
+    changes the run's outcome.
+    """
+    metrics_holder: dict = {}
+    try:
+        await _run_async_impl(options, metrics_holder)
+    finally:
+        metrics = metrics_holder.get("metrics")
+        if metrics is not None:
+            from .report import write_report
+
+            write_report(metrics)
+
+
+async def _run_async_impl(options: RunOptions, metrics_holder: dict) -> None:
     if options.unsafe_override and not options.acknowledge_override:
         raise typer.Exit(code=2)
     env_values = _env_values()
@@ -372,6 +391,7 @@ async def _run_async(options: RunOptions) -> None:
     log_format_value = cli_values.get("log_format") or env_values.get("log_format") or LogFormat.JSON.value
     configure_logging(LogFormat(log_format_value))
     metrics = Metrics()
+    metrics_holder["metrics"] = metrics  # SR3: expose to the report writer
 
     if not options.server:
         if not options.attackmap:

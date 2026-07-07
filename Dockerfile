@@ -24,6 +24,9 @@ RUN adduser --disabled-login --gecos "" appuser \
 
 RUN mkdir -p /config && chown appuser:appuser /config
 
+# SR3: writable dir for the report ShowRunner pulls (/report/report.json).
+RUN mkdir -p /report && chown appuser:appuser /report
+
 USER appuser
 
 EXPOSE 9090

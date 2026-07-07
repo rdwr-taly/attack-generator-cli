@@ -1,14 +1,14 @@
 {
-  "id": "attack-generator-cli",
-  "displayName": "Attack Generator CLI",
-  "description": "Configurable HTTP attack traffic generator with templating, scenario support, and cookie jar validation. Uses ShowRunner SDK for orchestration.",
+  "id": "attack-generator-cli-sr3",
+  "displayName": "Attack Generator CLI (SR3)",
+  "description": "SR3 pilot build. Configurable HTTP attack traffic generator with templating, scenario support, and cookie jar validation. Writes /report/report.json for ShowRunner to pull (measures + mitigation playbook). Uses ShowRunner SDK for orchestration.",
   "category": "Security Tools",
   "subCategory": "Attack Simulation",
   "icon": "fas fa-crosshairs",
   "deploymentContext": "app",
   "image_id_ref": "razor29/attack-generator-cli",
   "taskLifecycle": "stateful",
-  "schema_version": 6,
+  "schema_version": 7,
   "deployment": {
     "sdk_config_template": {
       "attackmap": "{{attackmap_json_for_env.ATTACKMAP_ID}}",
@@ -66,6 +66,76 @@
     "can_redeploy": true,
     "can_resume": false,
     "can_update_while_running": false
+  },
+  "sdk": {
+    "contract_version": 1,
+    "capabilities": ["report_pull_file", "measures"],
+    "reporting": {
+      "mode": "file",
+      "path": "/report/report.json",
+      "sealed_field": "status",
+      "sealed_value": "final",
+      "poll_interval_sec": 30
+    },
+    "measures": [
+      {
+        "key": "responses.by_code",
+        "label": "HTTP response codes",
+        "type": "count_by_enum",
+        "unit": "requests",
+        "options": [200, 403, 429, 503],
+        "options_open": true,
+        "source": { "kind": "report_json", "path": "responses.by_code" },
+        "success_checkable": true
+      },
+      {
+        "key": "responses.total",
+        "label": "Total responses",
+        "type": "count",
+        "unit": "requests",
+        "source": { "kind": "report_json", "path": "responses.total" },
+        "success_checkable": false
+      },
+      {
+        "key": "responses.blocked",
+        "label": "Blocked / challenged",
+        "type": "count",
+        "unit": "requests",
+        "source": { "kind": "report_json", "path": "responses.blocked" },
+        "success_checkable": true
+      },
+      {
+        "key": "responses.block_ratio",
+        "label": "Mitigation ratio",
+        "type": "ratio",
+        "unit": "fraction",
+        "higher_is_better": true,
+        "source": { "kind": "report_json", "path": "responses.block_ratio" },
+        "success_checkable": true
+      },
+      {
+        "key": "rps",
+        "label": "Requests/sec",
+        "type": "number",
+        "unit": "rps",
+        "source": { "kind": "prometheus", "metric": "attack_rps" },
+        "success_checkable": true
+      }
+    ],
+    "default_playbook": {
+      "steps": [
+        {
+          "id": "mitigation_fired",
+          "name": "WAF blocked or challenged at least one request",
+          "check": { "source": "report", "field": "responses.by_code.403", "op": ">=", "value": 1 }
+        },
+        {
+          "id": "meaningful_mitigation",
+          "name": "A meaningful share of traffic was mitigated",
+          "check": { "source": "report", "field": "responses.block_ratio", "op": ">=", "value": 0.25 }
+        }
+      ]
+    }
   },
   "monitoring": {
     "prometheus": {
