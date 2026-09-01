@@ -1,6 +1,6 @@
 {
-  "id": "attack-generator-cli-sr3",
-  "displayName": "Attack Generator CLI (SR3)",
+  "id": "attack-generator-cli",
+  "displayName": "Attack Generator CLI",
   "description": "SR3 pilot build. Configurable HTTP attack traffic generator with templating, scenario support, and cookie jar validation. Writes /report/report.json for ShowRunner to pull (measures + mitigation playbook). Uses ShowRunner SDK for orchestration.",
   "category": "Security Tools",
   "subCategory": "Attack Simulation",
