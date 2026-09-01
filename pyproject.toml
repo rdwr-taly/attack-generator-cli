@@ -15,7 +15,7 @@ dependencies = [
   "prometheus-client>=0.19",
   "pydantic>=2.5",
   "typer>=0.9",
-  "container-control>=1.1",
+  "showrunner-sdk[full] @ git+https://github.com/rdwr-taly/showrunner-sdk.git@main",
   "trio>=0.22",
 ]
 
@@ -31,6 +31,12 @@ line-length = 100
 
 [tool.setuptools.packages.find]
 include = ["attack_generator*"]
+
+[tool.setuptools.package-data]
+# Ship data files inside the installed package so the console script (which
+# imports from site-packages) can find them. Without this the attackmap schema
+# was missing at runtime and validation crashed the runner.
+attack_generator = ["schemas/*.json", "builtins/*.json"]
 
 [build-system]
 requires = ["setuptools>=67", "wheel"]

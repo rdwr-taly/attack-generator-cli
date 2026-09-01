@@ -20,12 +20,10 @@ import typer
 from jsonschema import Draft7Validator
 from pydantic import ValidationError
 
-from .integrations import container_control_adapter
 from .metrics import Metrics, start_metrics_server
 from .models import AttackMap, ConfigError, LogFormat, RuntimeConfig, resolve_runtime_config
 from .pools import BUILTIN_HEADER_FILES, BUILTIN_UA_FILES, UAPool
 from .runner import AttackRunner, ensure_allowlist
-from .server import ControlServer
 
 APP_NAME = "attack-generator"
 app = typer.Typer(add_completion=False)
@@ -163,6 +161,34 @@ class RunnerManager:
             await self._runner.stop()
             self._runner = None
 
+    async def restart(self, new_cfg: Dict[str, Any]) -> None:
+        """Stop current workload, apply new config, and restart.
+
+        Called when the SDK fires a config-reload callback (SIGHUP).
+        Gracefully tears down the running AttackRunner and starts a fresh
+        one with the updated attackmap / override config.
+        """
+        LOGGER.info("Config reload — stopping current workload")
+        await self.stop()
+
+        attackmap_payload = new_cfg.get("attackmap")
+        override_config = new_cfg.get("config")
+
+        if not attackmap_payload and self._current_payload is None:
+            LOGGER.warning("Reloaded config has no attackmap and no previous payload — staying idle")
+            return
+
+        try:
+            config = await self.start(
+                attackmap_payload=attackmap_payload,
+                override_config=override_config,
+            )
+            LOGGER.info("Workload restarted with reloaded config (qps=%s, concurrency=%s)",
+                        config.qps, config.concurrency)
+        except (AttackMapValidationError, ConfigError) as exc:
+            LOGGER.error("Failed to restart after config reload: %s", exc)
+            raise
+
 def configure_logging(fmt: LogFormat) -> None:
     logging.basicConfig(level=logging.INFO)
     handler = logging.StreamHandler(sys.stdout)
@@ -218,7 +244,10 @@ def _env_values() -> Dict[str, Any]:
 
 @lru_cache(maxsize=1)
 def _schema_validator() -> Draft7Validator:
-    schema_path = BASE_PATH.parent / "schemas" / "attackmap.schema.json"
+    # Schema ships inside the package (like builtins/) so it resolves when the
+    # console script imports attack_generator from site-packages. The old
+    # BASE_PATH.parent path only worked when running from a source checkout.
+    schema_path = BASE_PATH / "schemas" / "attackmap.schema.json"
     with schema_path.open("r", encoding="utf-8") as handle:
         schema = json.load(handle)
     return Draft7Validator(schema)
@@ -385,9 +414,17 @@ async def _run_async(options: RunOptions) -> None:
             raise
         return
 
-    if not container_control_adapter.available():
-        typer.echo("container-control not installed; control server disabled", err=True)
-        raise typer.Exit(code=1)
+    # ── ShowRunner (server) mode ──
+    from showrunner_sdk import config as sr_config, metrics as sr_metrics, health as sr_health
+
+    try:
+        dist_version = metadata.version("attack-generator")
+    except metadata.PackageNotFoundError:
+        dist_version = "0.0.0-dev"
+
+    cfg = sr_config.load()
+    sr_metrics.set_app_info(name="attack-generator", version=dist_version)
+    sr_metrics.start_server()  # port 9090
 
     cli_values.setdefault("server", True)
     shutdown_event = anyio.Event()
@@ -406,53 +443,34 @@ async def _run_async(options: RunOptions) -> None:
                 with anyio.open_signal_receiver(signal.SIGINT, signal.SIGTERM) as signals:
                     async for _ in signals:
                         await manager.stop()
+                        sr_health.set_status("stopped")
                         shutdown_event.set()
                         break
             except (NotImplementedError, RuntimeError):  # pragma: no cover - platform guard
                 return
 
-        async def _health() -> Dict[str, Any]:
-            return {"status": "running" if manager.is_running() else "stopped"}
-
-        async def _start_endpoint(payload: Dict[str, Any]) -> Dict[str, Any]:
-            try:
-                config = await manager.start(
-                    attackmap_payload=payload.get("attackmap"),
-                    override_config=payload.get("config"),
-                )
-            except AttackMapValidationError as exc:
-                from fastapi import HTTPException
-
-                raise HTTPException(status_code=400, detail=exc.errors) from exc
-            except ConfigError as exc:
-                from fastapi import HTTPException
-
-                raise HTTPException(status_code=400, detail=[str(exc)]) from exc
-            return {"status": "running", "qps": config.qps}
-
-        async def _stop_endpoint() -> None:
-            await manager.stop()
-
-        port_override = cli_values.get("metrics_port") or env_values.get("metrics_port")
-        control_server = ControlServer(
-            port=port_override or 9102,
-            on_start=_start_endpoint,
-            on_stop=_stop_endpoint,
-            health_probe=_health,
-            metrics=metrics,
-        )
-
-        tg.start_soon(control_server.run)
         tg.start_soon(_watch_signals_server)
 
+        # Start attack from config file (/config/app.json)
+        attackmap_payload = cfg.get("attackmap") if cfg else None
+        override_config = cfg.get("config") if cfg else None
+
+        # Allow --attackmap CLI flag to override config file
         if options.attackmap:
             try:
                 raw = await _read_attackmap_source(options.attackmap)
-                initial_payload = json.loads(raw)
-                await manager.start(attackmap_payload=initial_payload, override_config=None)
+                attackmap_payload = json.loads(raw)
             except json.JSONDecodeError as exc:
                 typer.echo(f"/: invalid JSON: {exc.msg}", err=True)
                 raise typer.Exit(code=1) from exc
+
+        if attackmap_payload:
+            try:
+                await manager.start(
+                    attackmap_payload=attackmap_payload,
+                    override_config=override_config,
+                )
+                sr_health.set_status("running")
             except AttackMapValidationError as exc:
                 for message in exc.errors:
                     typer.echo(message, err=True)
@@ -460,12 +478,46 @@ async def _run_async(options: RunOptions) -> None:
             except ConfigError as exc:
                 typer.echo(str(exc), err=True)
                 raise typer.Exit(code=1)
+        else:
+            LOGGER.info("No attackmap in config — waiting for config reload via SIGHUP")
+            sr_health.set_status("idle")
+
+        # Register SIGHUP reload callback.
+        # The SDK calls this synchronously from the signal handler, so we
+        # stash the new config and signal an anyio.Event that the async
+        # reload loop (below) picks up to perform the actual restart.
+        _pending_reload_cfg: Dict[str, Any] = {}
+        _reload_event_holder: List[anyio.Event] = [anyio.Event()]
+
+        def _on_config_reload(new_cfg: Dict[str, Any]) -> None:
+            LOGGER.info("Config reloaded (%d keys) — scheduling workload restart", len(new_cfg))
+            _pending_reload_cfg.clear()
+            _pending_reload_cfg.update(new_cfg)
+            _reload_event_holder[0].set()
+
+        sr_config.on_reload(_on_config_reload)
+
+        async def _reload_loop() -> None:
+            """Watch for config-reload signals and restart the manager."""
+            while not shutdown_event.is_set():
+                await _reload_event_holder[0].wait()
+                _reload_event_holder[0] = anyio.Event()  # reset for next reload
+                if shutdown_event.is_set():
+                    break
+                try:
+                    await manager.restart(dict(_pending_reload_cfg))
+                    sr_health.set_status("running")
+                except (AttackMapValidationError, ConfigError) as exc:
+                    LOGGER.error("Reload failed: %s — previous workload stopped", exc)
+                    sr_health.set_status("error", reason=str(exc))
+
+        tg.start_soon(_reload_loop)
 
         try:
             await shutdown_event.wait()
         finally:
             await manager.stop()
-            await control_server.stop()
+            sr_health.set_status("stopped")
             tg.cancel_scope.cancel()
 
 
@@ -491,7 +543,7 @@ def run(
     seed: Optional[int] = typer.Option(None, help="Deterministic seed"),
     unsafe_override: bool = typer.Option(False, help="Enable unsafe overrides"),
     i_know_what_im_doing: bool = typer.Option(False, help="Confirm unsafe override"),
-    server: bool = typer.Option(False, help="Enable container-control server"),
+    server: bool = typer.Option(False, help="Enable ShowRunner managed mode"),
     operator: Optional[str] = typer.Option(None, help="Operator name for audit banner"),
 ) -> None:
     if not server and not attackmap:
