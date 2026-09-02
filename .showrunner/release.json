@@ -1,8 +1,8 @@
 {
-  "image": "razor29/attack-generator-cli:v1.1.0-sr3",
-  "version": "v1.1.0-sr3",
-  "is_latest": false,
-  "released_at": "2026-07-07T08:16:50Z",
-  "commit": "04337cbbf08b3fa8f428e1b1926a555611b81564",
+  "image": "razor29/attack-generator-cli:v3.0.0",
+  "version": "v3.0.0",
+  "is_latest": true,
+  "released_at": "2026-09-02T09:41:57Z",
+  "commit": "cef90a4e72dc22c6dbcca76b50b8b8c212c1e750",
   "changelog": ""
 }
